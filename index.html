@@ -89,27 +89,27 @@
             const [agenda, setAgenda] = useState([]);
             const [query, setQuery] = useState("Summarize my daily schedule.");
             const [sources, setSources] = useState([]);
-            const [error, setError] = useState(null);
+            
+            // Set initial error state if the key is missing
+            const [error, setError] = useState(
+                apiKey === "" 
+                    ? "API Key Missing! Please insert your Gemini API key into the 'apiKey' variable in the index.html file." 
+                    : null
+            );
 
             const toggleWidget = () => {
                 setIsWidgetVisible(prev => !prev);
             };
 
             const fetchAgenda = useCallback(async () => {
-                if (isLoading) return;
+                // Prevent fetch if already loading or if key is known to be missing
+                if (isLoading || apiKey === "") return;
 
                 setIsLoading(true);
                 setAgenda([]);
                 setSources([]);
                 setError(null);
                 
-                // NEW KEY CHECK: Stop immediately if the key is missing for external hosting
-                if (apiKey === "") {
-                    setError("API Key Required! Please insert your personal Gemini API key into the 'apiKey' variable in the index.html file.");
-                    setIsLoading(false);
-                    return;
-                }
-
                 const payload = {
                     contents: [{ parts: [{ text: query }] }],
                     tools: [{ "google_search": {} }],
@@ -125,28 +125,30 @@
 
                 while (attempt < maxRetries) {
                     try {
-                        const response = await fetch(`${apiUrlBase}?key=${apiKey}`, { // Appending key here
+                        // The key is passed here in the URL query parameter
+                        const response = await fetch(`${apiUrlBase}?key=${apiKey}`, { 
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(payload)
                         });
 
                         if (!response.ok) {
-                            // If we get a 403 or other persistent error, throw a clear message
-                            throw new Error(`HTTP error! status: ${response.status} (${response.statusText || 'Forbidden'})`);
+                            // If we get a 403 (Forbidden), we know the key is the issue and stop retrying.
+                            if (response.status === 403) {
+                                throw new Error("API Key Error (403 Forbidden). Ensure your key is valid and not restricted for this domain.");
+                            }
+                            throw new Error(`HTTP error! status: ${response.status} (${response.statusText || 'Unknown Error'})`);
                         }
 
                         const result = await response.json();
                         
-                        // Check 1: Ensure we got candidates array
+                        // Error checks
                         if (!result.candidates || result.candidates.length === 0) {
                             console.error("API response lacked candidates or was malformed:", result);
                             throw new Error("API failed to return any candidate response.");
                         }
 
                         const candidate = result.candidates[0];
-
-                        // Check 2: Ensure the first candidate has the expected text content
                         if (!candidate || !candidate.content?.parts?.[0]?.text) {
                             console.error("Candidate content was empty or incomplete:", candidate);
                             throw new Error("API response was malformed or empty (no text part found).");
@@ -154,7 +156,7 @@
                         
                         let jsonText = candidate.content.parts[0].text.trim();
                         
-                        // Remove markdown fences (```json or ```) that the model sometimes includes
+                        // Remove markdown fences (```json or ```)
                         if (jsonText.startsWith('```json')) {
                             jsonText = jsonText.substring(7).trim();
                         } else if (jsonText.startsWith('```')) {
@@ -173,6 +175,7 @@
                         const parsedAgenda = JSON.parse(jsonText);
                         setAgenda(parsedAgenda);
 
+                        // Extract sources
                         let newSources = [];
                         const groundingMetadata = candidate.groundingMetadata;
                         if (groundingMetadata && groundingMetadata.groundingAttributions) {
@@ -189,15 +192,13 @@
                     } catch (err) {
                         console.error(`Attempt ${attempt + 1} failed:`, err);
                         
-                        // If we hit a 403, stop retrying immediately (we know the key is the issue)
                         if (err.message.includes("403")) {
-                            setError("API Key Error (403 Forbidden). Ensure your key is valid and not restricted for this domain.");
+                            setError(err.message);
                             break;
                         }
 
                         if (attempt === maxRetries - 1) {
-                            // Only set the user-facing error on the final failure
-                            setError("Failed to fetch agenda after multiple attempts. Please check your query or try again later.");
+                            setError(`Failed to fetch agenda: ${err.message}`);
                             break;
                         }
                         const delay = Math.pow(2, attempt) * 1000;
@@ -209,7 +210,8 @@
             }, [query, isLoading]);
 
             useEffect(() => {
-                if (isWidgetVisible && agenda.length === 0 && !isLoading) {
+                // Only run fetchAgenda if the key is present, widget is visible, agenda is empty, and not loading.
+                if (apiKey !== "" && isWidgetVisible && agenda.length === 0 && !isLoading) {
                     fetchAgenda();
                 }
             }, [isWidgetVisible, agenda.length, isLoading, fetchAgenda]);
@@ -221,6 +223,7 @@
             });
 
             const isAgendaEmpty = agenda.length === 0;
+            const canFetch = apiKey !== "" && !isLoading;
 
             return (
                 <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-start pt-10 font-sans p-4">
@@ -257,13 +260,13 @@
                                     onChange={(e) => setQuery(e.target.value)}
                                     placeholder="e.g., What's my schedule today?"
                                     aria-label="Agenda query"
-                                    disabled={isLoading}
+                                    disabled={!canFetch}
                                 />
                                 <button
                                     onClick={fetchAgenda}
-                                    disabled={isLoading}
+                                    disabled={!canFetch}
                                     className={`w-full flex items-center justify-center py-2 px-4 rounded-lg text-white font-semibold transition-colors duration-200
-                                        ${isLoading ? 'bg-orange-400 cursor-not-allowed' : 'bg-orange-600 hover:bg-orange-700 active:bg-orange-800'}`}
+                                        ${!canFetch ? 'bg-gray-400 cursor-not-allowed' : 'bg-orange-600 hover:bg-orange-700 active:bg-orange-800'}`}
                                 >
                                     {isLoading ? (
                                         <Loader2 className="w-5 h-5 mr-2 animate-spin" />
@@ -278,7 +281,8 @@
                             <div className="mt-5 max-h-60 overflow-y-auto">
                                 {error && (
                                     <div className="p-3 text-sm font-medium text-red-700 bg-red-100 rounded-lg">
-                                        Error: {error}
+                                        <p className="font-semibold mb-1">Error:</p>
+                                        <p>{error}</p>
                                     </div>
                                 )}
                                 {!isLoading && isAgendaEmpty && !error && (

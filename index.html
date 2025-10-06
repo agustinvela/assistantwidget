@@ -41,7 +41,10 @@
         const { useState, useCallback, useEffect } = React;
         
         // --- Configuration ---
-        const apiKey = "";
+        // IMPORTANT: If running this file outside of the Canvas environment (e.g., on GitHub Pages), 
+        // you MUST insert your personal Gemini API key here inside the quotes.
+        // NOTE: Keeping the key in public code is not ideal practice, but necessary for simple deployment.
+        const apiKey = "AIzaSyBXl0le7VtMemclxmQMs5JZoo5nlM5_1Nc"; // <--- INSERT YOUR KEY HERE!
         const apiUrlBase = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
 
         const systemPrompt = `You are a helpful, professional digital assistant designed to quickly summarize a user's daily agenda. The user is requesting a summary of their upcoming meetings and tasks. Your response MUST be a JSON array formatted EXACTLY according to the provided schema.
@@ -99,6 +102,13 @@
                 setAgenda([]);
                 setSources([]);
                 setError(null);
+                
+                // NEW KEY CHECK: Stop immediately if the key is missing for external hosting
+                if (apiKey === "") {
+                    setError("API Key Required! Please insert your personal Gemini API key into the 'apiKey' variable in the index.html file.");
+                    setIsLoading(false);
+                    return;
+                }
 
                 const payload = {
                     contents: [{ parts: [{ text: query }] }],
@@ -115,14 +125,15 @@
 
                 while (attempt < maxRetries) {
                     try {
-                        const response = await fetch(apiUrlBase, {
+                        const response = await fetch(`${apiUrlBase}?key=${apiKey}`, { // Appending key here
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(payload)
                         });
 
                         if (!response.ok) {
-                            throw new Error(`HTTP error! status: ${response.status}`);
+                            // If we get a 403 or other persistent error, throw a clear message
+                            throw new Error(`HTTP error! status: ${response.status} (${response.statusText || 'Forbidden'})`);
                         }
 
                         const result = await response.json();
@@ -177,6 +188,13 @@
                         
                     } catch (err) {
                         console.error(`Attempt ${attempt + 1} failed:`, err);
+                        
+                        // If we hit a 403, stop retrying immediately (we know the key is the issue)
+                        if (err.message.includes("403")) {
+                            setError("API Key Error (403 Forbidden). Ensure your key is valid and not restricted for this domain.");
+                            break;
+                        }
+
                         if (attempt === maxRetries - 1) {
                             // Only set the user-facing error on the final failure
                             setError("Failed to fetch agenda after multiple attempts. Please check your query or try again later.");

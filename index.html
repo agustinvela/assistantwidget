@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Taskbar Agenda Widget</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load React and Babel for JSX in the browser -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        /* Define the Inter font family */
+        :root {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Ensure the body takes up the full viewport height */
+        body, #root {
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Lucide React Icons (Inlined as SVGs or simple functions since full import isn't easy with CDN Babel)
+        // Note: For simplicity and since we can't import Lucide components directly via CDN, 
+        // we will manually define the needed components or use simple fallback SVGs if needed.
+        
+        // --- Lucide Icons (Simplified Inline Definitions) ---
+        const RefreshCw = (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M21.5 2v6h-6"/><path d="M21.5 8l-2.07-2.07A10 10 0 1 0 16 18"/><path d="M21.5 8l-2.07-2.07A10 10 0 1 0 16 18"/></svg>;
+        const Calendar = (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>;
+        const Loader2 = (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>;
+        const Link = (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.74 1.74"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>;
+        const Zap = (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>;
+
+        const { useState, useCallback, useEffect } = React;
+        
+        // --- Configuration ---
+        const apiKey = "";
+        const apiUrlBase = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
+
+        const systemPrompt = `You are a helpful, professional digital assistant designed to quickly summarize a user's daily agenda. The user is requesting a summary of their upcoming meetings and tasks. Your response MUST be a JSON array formatted EXACTLY according to the provided schema.
+
+        1. Find the current date using Google Search grounding.
+        2. Search for common current or recent events/meetings for that date (e.g., stock market openings, daily news briefings, general business meetings).
+        3. Structure the findings into an array of events.
+        4. If no specific events are found, create a small, realistic mock schedule for today (e.g., "Daily Standup," "Project Review," "Lunch").
+        5. The 'app' field should be one of: 'Calendar', 'Chat', or 'Gmail' to simulate integration source.
+        6. The 'time' field must be a short time string (e.g., '9:00 AM').
+        `;
+
+        const agendaSchema = {
+            type: "ARRAY",
+            items: {
+                type: "OBJECT",
+                properties: {
+                    "time": { "type": "STRING", "description": "Start time of the event, e.g., 9:00 AM." },
+                    "title": { "type": "STRING", "description": "The name of the meeting or event." },
+                    "app": { "type": "STRING", "description": "The related Google App, e.g., Calendar, Chat, Gmail." }
+                },
+                required: ["time", "title", "app"]
+            }
+        };
+
+        const getAppIcon = (app) => {
+            switch (app) {
+                case 'Calendar':
+                    return <Calendar className="w-4 h-4 text-orange-500" />;
+                case 'Chat':
+                    return <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-blue-500"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>; 
+                case 'Gmail':
+                    return <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-red-500"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>;
+                default:
+                    return <Zap className="w-4 h-4 text-gray-500" />;
+            }
+        };
+
+        const App = () => {
+            const [isWidgetVisible, setIsWidgetVisible] = useState(false);
+            const [isLoading, setIsLoading] = useState(false);
+            const [agenda, setAgenda] = useState([]);
+            const [query, setQuery] = useState("Summarize my daily schedule.");
+            const [sources, setSources] = useState([]);
+            const [error, setError] = useState(null);
+
+            const toggleWidget = () => {
+                setIsWidgetVisible(prev => !prev);
+            };
+
+            const fetchAgenda = useCallback(async () => {
+                if (isLoading) return;
+
+                setIsLoading(true);
+                setAgenda([]);
+                setSources([]);
+                setError(null);
+
+                const payload = {
+                    contents: [{ parts: [{ text: query }] }],
+                    tools: [{ "google_search": {} }],
+                    systemInstruction: { parts: [{ text: systemPrompt }] },
+                    config: {
+                        responseMimeType: "application/json",
+                        responseSchema: agendaSchema
+                    }
+                };
+
+                const maxRetries = 5;
+                let attempt = 0;
+
+                while (attempt < maxRetries) {
+                    try {
+                        const response = await fetch(apiUrlBase, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+
+                        const result = await response.json();
+                        const candidate = result.candidates?.[0];
+
+                        if (candidate && candidate.content?.parts?.[0]?.text) {
+                            let jsonText = candidate.content.parts[0].text.trim();
+                            
+                            // Remove markdown fences (```json or ```) that the model sometimes includes
+                            if (jsonText.startsWith('```json')) {
+                                jsonText = jsonText.substring(7).trim();
+                            } else if (jsonText.startsWith('```')) {
+                                jsonText = jsonText.substring(3).trim();
+                            }
+                            
+                            if (jsonText.endsWith('```')) {
+                                jsonText = jsonText.substring(0, jsonText.length - 3).trim();
+                            }
+                            
+                            if (jsonText.length === 0) {
+                                console.error("API returned content that was empty after cleaning markdown fences.");
+                                throw new Error("API response was malformed or empty (cleaned text was blank).");
+                            }
+                            
+                            const parsedAgenda = JSON.parse(jsonText);
+                            setAgenda(parsedAgenda);
+
+                            let newSources = [];
+                            const groundingMetadata = candidate.groundingMetadata;
+                            if (groundingMetadata && groundingMetadata.groundingAttributions) {
+                                newSources = groundingMetadata.groundingAttributions
+                                    .map(attribution => ({
+                                        uri: attribution.web?.uri,
+                                        title: attribution.web?.title,
+                                    }))
+                                    .filter(source => source.uri && source.title);
+                            }
+                            setSources(newSources);
+                            break;
+                        } else {
+                            throw new Error("API response was malformed or empty (no text part found).");
+                        }
+                    } catch (err) {
+                        console.error(`Attempt ${attempt + 1} failed:`, err);
+                        if (attempt === maxRetries - 1) {
+                            setError("Failed to fetch agenda after multiple attempts. Please check your query or try again later.");
+                            break;
+                        }
+                        const delay = Math.pow(2, attempt) * 1000;
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        attempt++;
+                    }
+                }
+                setIsLoading(false);
+            }, [query, isLoading]);
+
+            useEffect(() => {
+                if (isWidgetVisible && agenda.length === 0 && !isLoading) {
+                    fetchAgenda();
+                }
+            }, [isWidgetVisible, agenda.length, isLoading, fetchAgenda]);
+
+            const today = new Date().toLocaleDateString('en-US', {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric'
+            });
+
+            const isAgendaEmpty = agenda.length === 0;
+
+            return (
+                <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-start pt-10 font-sans p-4">
+                    {/* The "Taskbar Icon" - always visible, simulating the taskbar presence */}
+                    <div
+                        className="fixed bottom-0 right-0 m-4 p-3 bg-white shadow-xl rounded-full cursor-pointer hover:scale-105 transition-transform duration-200 z-50 ring-4 ring-orange-400/50"
+                        onClick={toggleWidget}
+                    >
+                        <Calendar className="w-6 h-6 text-orange-600" />
+                    </div>
+
+                    {/* Main Widget Flyout (Simulated) */}
+                    <div
+                        className={`fixed bottom-16 right-4 w-full max-w-sm bg-white border border-gray-200 shadow-2xl rounded-xl transition-all duration-300 ease-in-out z-40
+                        ${isWidgetVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}
+                    >
+                        <div className="p-5">
+                            <div className="flex justify-between items-center pb-3 border-b border-gray-100">
+                                <h2 className="text-xl font-bold text-gray-800 flex items-center">
+                                    <Calendar className="w-5 h-5 mr-2 text-orange-500" />
+                                    My Agenda
+                                </h2>
+                                <span className="text-sm font-medium text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+                                    {today}
+                                </span>
+                            </div>
+
+                            {/* Input/Action Bar */}
+                            <div className="mt-4 space-y-3">
+                                <input
+                                    type="text"
+                                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500 text-sm"
+                                    value={query}
+                                    onChange={(e) => setQuery(e.target.value)}
+                                    placeholder="e.g., What's my schedule today?"
+                                    aria-label="Agenda query"
+                                    disabled={isLoading}
+                                />
+                                <button
+                                    onClick={fetchAgenda}
+                                    disabled={isLoading}
+                                    className={`w-full flex items-center justify-center py-2 px-4 rounded-lg text-white font-semibold transition-colors duration-200
+                                        ${isLoading ? 'bg-orange-400 cursor-not-allowed' : 'bg-orange-600 hover:bg-orange-700 active:bg-orange-800'}`}
+                                >
+                                    {isLoading ? (
+                                        <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                                    ) : (
+                                        <RefreshCw className="w-4 h-4 mr-2" />
+                                    )}
+                                    {isLoading ? 'Fetching...' : 'Refresh Agenda'}
+                                </button>
+                            </div>
+
+                            {/* Agenda Display */}
+                            <div className="mt-5 max-h-60 overflow-y-auto">
+                                {error && (
+                                    <div className="p-3 text-sm font-medium text-red-700 bg-red-100 rounded-lg">
+                                        Error: {error}
+                                    </div>
+                                )}
+                                {!isLoading && isAgendaEmpty && !error && (
+                                    <div className="p-4 text-center text-gray-500 bg-gray-50 rounded-lg">
+                                        <p>No events loaded. Click "Refresh Agenda" to fetch a simulated schedule based on your query.</p>
+                                    </div>
+                                )}
+                                <ul className="space-y-3">
+                                    {agenda.map((event, index) => (
+                                        <li key={index} className="flex items-start p-3 bg-white hover:bg-orange-50/50 rounded-lg border border-gray-100 transition duration-150 shadow-sm">
+                                            <div className="mr-3 pt-1">
+                                                {getAppIcon(event.app)}
+                                            </div>
+                                            <div className="flex-grow">
+                                                <p className="text-gray-900 font-semibold leading-snug">{event.title}</p>
+                                                <p className="text-xs text-gray-500 mt-0.5 font-mono">{event.time}</p>
+                                            </div>
+                                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ml-2 ${
+                                                event.app === 'Calendar' ? 'bg-orange-100 text-orange-700' :
+                                                event.app === 'Chat' ? 'bg-blue-100 text-blue-700' :
+                                                event.app === 'Gmail' ? 'bg-red-100 text-red-700' :
+                                                'bg-gray-100 text-gray-700'
+                                            }`}>
+                                                {event.app}
+                                            </span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+
+                            {/* Grounding Sources */}
+                            {sources.length > 0 && (
+                                <div className="mt-4 pt-4 border-t border-gray-100">
+                                    <h4 className="text-xs font-semibold text-gray-600 mb-2">Sources (Simulated Integration):</h4>
+                                    <ul className="space-y-1">
+                                        {sources.slice(0, 2).map((source, index) => (
+                                            <li key={index} className="flex items-center">
+                                                <Link className="w-3 h-3 text-gray-400 mr-1 shrink-0" />
+                                                <a
+                                                    href={source.uri}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="text-xs text-gray-500 hover:text-orange-600 truncate transition-colors duration-150"
+                                                    title={source.title}
+                                                >
+                                                    {source.title}
+                                                </a>
+                                            </li>
+                                        ))}
+                                        {sources.length > 2 && (
+                                            <li className="text-xs text-gray-400">
+                                                ... and {sources.length - 2} more sources.
+                                            </li>
+                                        )}
+                                    </ul>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                    
+                    {/* Informational Message */}
+                    <div className="max-w-xl mx-auto mt-8 p-6 bg-white rounded-xl shadow-lg border border-gray-100">
+                        <h3 className="text-lg font-semibold text-gray-700 mb-3">Welcome to your Simulated Taskbar Widget!</h3>
+                        <p className="text-gray-600 text-sm leading-relaxed">
+                            This is a single-file React application designed to simulate the functionality of a taskbar flyout.
+                            The button in the bottom right corner (the orange <Calendar className="inline w-4 h-4" /> icon) acts as the "taskbar icon."
+                        </p>
+                        <p className="text-gray-600 text-sm leading-relaxed mt-2">
+                            Click the icon to toggle the agenda widget. The data is fetched using the **Gemini API** with
+                            Google Search grounding, which intelligently processes your query ("Summarize my daily schedule.")
+                            to return a structured list of simulated meetings and tasks, mimicking real-time app integration.
+                        </p>
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>

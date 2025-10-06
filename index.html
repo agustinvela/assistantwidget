@@ -126,48 +126,59 @@
                         }
 
                         const result = await response.json();
-                        const candidate = result.candidates?.[0];
+                        
+                        // Check 1: Ensure we got candidates array
+                        if (!result.candidates || result.candidates.length === 0) {
+                            console.error("API response lacked candidates or was malformed:", result);
+                            throw new Error("API failed to return any candidate response.");
+                        }
 
-                        if (candidate && candidate.content?.parts?.[0]?.text) {
-                            let jsonText = candidate.content.parts[0].text.trim();
-                            
-                            // Remove markdown fences (```json or ```) that the model sometimes includes
-                            if (jsonText.startsWith('```json')) {
-                                jsonText = jsonText.substring(7).trim();
-                            } else if (jsonText.startsWith('```')) {
-                                jsonText = jsonText.substring(3).trim();
-                            }
-                            
-                            if (jsonText.endsWith('```')) {
-                                jsonText = jsonText.substring(0, jsonText.length - 3).trim();
-                            }
-                            
-                            if (jsonText.length === 0) {
-                                console.error("API returned content that was empty after cleaning markdown fences.");
-                                throw new Error("API response was malformed or empty (cleaned text was blank).");
-                            }
-                            
-                            const parsedAgenda = JSON.parse(jsonText);
-                            setAgenda(parsedAgenda);
+                        const candidate = result.candidates[0];
 
-                            let newSources = [];
-                            const groundingMetadata = candidate.groundingMetadata;
-                            if (groundingMetadata && groundingMetadata.groundingAttributions) {
-                                newSources = groundingMetadata.groundingAttributions
-                                    .map(attribution => ({
-                                        uri: attribution.web?.uri,
-                                        title: attribution.web?.title,
-                                    }))
-                                    .filter(source => source.uri && source.title);
-                            }
-                            setSources(newSources);
-                            break;
-                        } else {
+                        // Check 2: Ensure the first candidate has the expected text content
+                        if (!candidate || !candidate.content?.parts?.[0]?.text) {
+                            console.error("Candidate content was empty or incomplete:", candidate);
                             throw new Error("API response was malformed or empty (no text part found).");
                         }
+                        
+                        let jsonText = candidate.content.parts[0].text.trim();
+                        
+                        // Remove markdown fences (```json or ```) that the model sometimes includes
+                        if (jsonText.startsWith('```json')) {
+                            jsonText = jsonText.substring(7).trim();
+                        } else if (jsonText.startsWith('```')) {
+                            jsonText = jsonText.substring(3).trim();
+                        }
+                        
+                        if (jsonText.endsWith('```')) {
+                            jsonText = jsonText.substring(0, jsonText.length - 3).trim();
+                        }
+                        
+                        if (jsonText.length === 0) {
+                            console.error("API returned content that was empty after cleaning markdown fences.");
+                            throw new Error("API response was malformed or empty (cleaned text was blank).");
+                        }
+                        
+                        const parsedAgenda = JSON.parse(jsonText);
+                        setAgenda(parsedAgenda);
+
+                        let newSources = [];
+                        const groundingMetadata = candidate.groundingMetadata;
+                        if (groundingMetadata && groundingMetadata.groundingAttributions) {
+                            newSources = groundingMetadata.groundingAttributions
+                                .map(attribution => ({
+                                    uri: attribution.web?.uri,
+                                    title: attribution.web?.title,
+                                }))
+                                .filter(source => source.uri && source.title);
+                        }
+                        setSources(newSources);
+                        break;
+                        
                     } catch (err) {
                         console.error(`Attempt ${attempt + 1} failed:`, err);
                         if (attempt === maxRetries - 1) {
+                            // Only set the user-facing error on the final failure
                             setError("Failed to fetch agenda after multiple attempts. Please check your query or try again later.");
                             break;
                         }
